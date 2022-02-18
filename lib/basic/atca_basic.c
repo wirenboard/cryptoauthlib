@@ -38,7 +38,9 @@ char atca_version[] = { "20180115" };  // change for each release, yyyymmdd
 ATCADevice _gDevice = NULL;
 #define MAX_BUSES   4
 
-typedef struct 
+#define MAX_OPERATION_RETRIES 5
+
+typedef struct
 {
     ATCADeviceType devtype;
     uint8_t pattern[4];
@@ -417,28 +419,47 @@ ATCA_STATUS atcab_execute_command(ATCAPacket* packet)
             break;
         }
 
-        // delay the appropriate amount of time for command to execute
-        atca_delay_ms(ca_cmd->execution_time_msec);
-
-        // receive the response
-        if ((status = atreceive(ca_iface, packet->data, &(packet->rxsize))) != ATCA_SUCCESS)
+        // receive the response (maybe retry reading without device reset)
+        for (int i = 0; i < MAX_OPERATION_RETRIES; i++)
         {
-            break;
-        }
+            // delay the appropriate amount of time for command to execute
+            atca_delay_ms(ca_cmd->execution_time_msec);
 
-        // Check response size
-        if (packet->rxsize < 4)
-        {
-            if (packet->rxsize > 0)
-            {
-                status = ATCA_RX_FAIL;
-            }
-            else
+            status = atreceive(ca_iface, packet->data, &(packet->rxsize));
+
+            // COMM_FAIL may mean that operation is not done yet
+            if (status == ATCA_COMM_FAIL)
             {
                 status = ATCA_RX_NO_RESPONSE;
+                continue;
+            }
+            else if (status != ATCA_SUCCESS)
+            {
+                break;
+            }
+
+            // Check response size
+            if (packet->rxsize < 4)
+            {
+                if (packet->rxsize > 0)
+                {
+                    status = ATCA_RX_FAIL;
+                }
+                else
+                {
+                    status = ATCA_RX_NO_RESPONSE;
+                    continue; // wait a bit longer and retry
+                }
+                break;
             }
             break;
         }
+
+        if (status != ATCA_SUCCESS)
+        {
+            break;
+        }
+
 
         if ((status = atCheckCrc(packet->data)) != ATCA_SUCCESS)
         {
