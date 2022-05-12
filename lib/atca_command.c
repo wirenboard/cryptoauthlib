@@ -1153,6 +1153,9 @@ ATCA_STATUS isATCAError(uint8_t *data)
         case 0xff: // bad crc found (command not properly received by device) or other comm error
             return ATCA_STATUS_CRC;
             break;
+        case 0xee: // watchdog is almost expired, need to reset watchdog
+            return ATCA_STATUS_WATCHDOG;
+            break;
         default:
             return ATCA_GEN_FAIL;
             break;
