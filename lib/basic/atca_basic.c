@@ -402,12 +402,20 @@ ATCA_STATUS atcab_execute_command(ATCAPacket* packet)
     ATCACommand ca_cmd = _gDevice->mCommands;
     ATCAIface ca_iface = _gDevice->mIface;
 
+    // repeat flag for Watchdog About to Expire events
+    int do_full_repeat = 0;
+    int full_repeat_counter = MAX_OPERATION_RETRIES;
+
+    uint8_t recv_buffer[sizeof(packet->data)];
+
     if ((status = atGetExecTime(packet->opcode, ca_cmd)) != ATCA_SUCCESS)
     {
         return status;
     }
     do
     {
+        do_full_repeat = 0;
+
         if ((status = atcab_wakeup()) != ATCA_SUCCESS)
         {
             break;
@@ -425,7 +433,7 @@ ATCA_STATUS atcab_execute_command(ATCAPacket* packet)
             // delay the appropriate amount of time for command to execute
             atca_delay_ms(ca_cmd->execution_time_msec);
 
-            status = atreceive(ca_iface, packet->data, &(packet->rxsize));
+            status = atreceive(ca_iface, recv_buffer, &(packet->rxsize));
 
             // COMM_FAIL may mean that operation is not done yet
             if (status == ATCA_COMM_FAIL)
@@ -461,17 +469,33 @@ ATCA_STATUS atcab_execute_command(ATCAPacket* packet)
         }
 
 
-        if ((status = atCheckCrc(packet->data)) != ATCA_SUCCESS)
+        if ((status = atCheckCrc(recv_buffer)) != ATCA_SUCCESS)
         {
             break;
         }
 
-        if ((status = isATCAError(packet->data)) != ATCA_SUCCESS)
+        if ((status = isATCAError(recv_buffer)) != ATCA_SUCCESS)
         {
-            break;
+            if (status == ATCA_STATUS_WATCHDOG)
+            {
+                // Watchdog is about to expire, so need to set device to Idle mode and repeat
+                if (full_repeat_counter-- > 0)
+                {
+                    if ((status = atcab_idle()) != ATCA_SUCCESS)
+                    {
+                        break;
+                    }
+                    do_full_repeat = 1;
+                }
+
+            } else {
+                break;
+            }
         }
     }
-    while (0);
+    while (do_full_repeat);
+
+    memcpy(packet->data, recv_buffer, packet->rxsize);
 
     _atcab_exit();
     return status;
