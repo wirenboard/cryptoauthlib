@@ -55,6 +55,7 @@ typedef enum
     ATCA_STATUS_ECC             = 0xD6, //!< response status byte is ECC fault (status byte = 0x05)
     ATCA_STATUS_SELFTEST_ERROR  = 0xD7, //!< response status byte is Self Test Error, chip in failure mode (status byte = 0x07)
     ATCA_STATUS_WATCHDOG        = 0xD8, //!< response status byte is Watchdog About to Expire (status byte = 0xEE)
+    ATCA_HEALTH_TEST_ERROR      = 0xD9, //!< response status byte is Health Test Error: RNG health test failed and latched (status byte = 0x08, ATECC608)
     ATCA_FUNC_FAIL              = 0xE0, //!< Function could not execute due to incorrect condition / state.
     ATCA_GEN_FAIL               = 0xE1, //!< unspecified error
     ATCA_BAD_PARAM              = 0xE2, //!< bad argument (out of range, null pointer, etc.)

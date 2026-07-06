@@ -1144,6 +1144,10 @@ ATCA_STATUS isATCAError(uint8_t *data)
         case 0x07: // chip is in self test failure mode
             return ATCA_STATUS_SELFTEST_ERROR;
             break;
+        case 0x08: // ATECC608: RNG health test error, latched until sleep/reset
+                   // (with ChipOptions bit3 = 0 it does NOT clear on its own)
+            return ATCA_HEALTH_TEST_ERROR;
+            break;
         case 0x0f: // chip can't execute the command
             return ATCA_EXECUTION_ERROR;
             break;
