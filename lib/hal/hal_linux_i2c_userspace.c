@@ -347,7 +347,12 @@ ATCA_STATUS hal_i2c_wake(ATCAIface iface)
                While that frame is pending the chip NACKs writes, so the
                sleep-flag probe alone cannot park it. Drain the leftover
                frame to free the chip, then park it with the flag (ACKed
-               now); the next pulse wakes it normally. */
+               now); the next pulse wakes it normally.
+
+               A full-buffer read is deliberate: the abandoning client
+               may have consumed part of the frame, so nothing read here
+               - a would-be count byte included - reliably describes what
+               remains; reading past the end only clocks out padding. */
             uint8_t drain[128];
 
             status = ATCA_COMM_FAIL;
