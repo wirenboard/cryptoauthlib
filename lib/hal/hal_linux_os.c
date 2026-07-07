@@ -215,12 +215,22 @@ static ATCA_STATUS hal_os_shm_open_existing(int fd, void** ppMutex)
  */
 ATCA_STATUS hal_os_create_mutex(void** ppMutex, const char *pName)
 {
-    char final_path[sizeof(HAL_OS_SHM_DIR) + NAME_MAX];
-    char tmp_path[sizeof(HAL_OS_SHM_DIR) + NAME_MAX];
+    char final_path[sizeof(HAL_OS_SHM_DIR) + 1 + NAME_MAX];
+    char tmp_path[sizeof(HAL_OS_SHM_DIR) + 1 + NAME_MAX + 32];
     int  attempt;
     int  n;
 
-    if (!ppMutex || !pName || NULL != strchr(pName, '/'))
+    if (!ppMutex || !pName)
+    {
+        return ATCA_BAD_PARAM;
+    }
+    /* Accept the POSIX "/name" spelling: an shm name is a single path
+       component either way. */
+    if ('/' == pName[0])
+    {
+        pName++;
+    }
+    if ('\0' == pName[0] || NULL != strchr(pName, '/'))
     {
         return ATCA_BAD_PARAM;
     }
