@@ -31,6 +31,7 @@
 
 #include "atca_hal.h"
 #include "hal_linux_i2c_userspace.h"
+#include "atca_diag.h"
 
 #include <linux/i2c-dev.h>
 #include <unistd.h>
@@ -241,6 +242,22 @@ void change_i2c_speed(ATCAIface iface, uint32_t speed)
  * \return ATCA_SUCCESS on success, otherwise an error code.
  */
 
+/** Number of wake pulse attempts before giving up. A single attempt turns
+ *  any transient NACK on the wake response read into a failed session; a
+ *  couple of retries ride out bus glitches and chips that were
+ *  mid-transaction when the pulse arrived. */
+#define HAL_I2C_WAKE_RETRIES 4
+
+/** Backoff before retry attempts 2..4. Back-to-back pulses (~2 ms apart)
+ *  all land inside the busy window of a colliding client's command - the
+ *  chip NACKs everything while executing (Random ~23 ms, GenKey ~115 ms).
+ *  Spacing the retries so the whole sequence spans ~200 ms lets the last
+ *  attempts fall after any typical execution window closes. A genuinely
+ *  dead chip takes ~200 ms to fail - negligible next to the session
+ *  it would fail anyway. */
+static const uint16_t hal_i2c_wake_backoff_ms[HAL_I2C_WAKE_RETRIES - 1] =
+    { 20, 60, 120 };
+
 ATCA_STATUS hal_i2c_wake(ATCAIface iface)
 {
     ATCAIfaceCfg *cfg = atgetifacecfg(iface);
@@ -248,6 +265,10 @@ ATCA_STATUS hal_i2c_wake(ATCAIface iface)
     int f_i2c;  // I2C file descriptor
     uint8_t data[4], expected[4] = { 0x04, 0x11, 0x33, 0x43 };
     uint8_t dummy_byte = 0x00;
+    uint8_t sleep_flag = 0x01;
+    ATCA_STATUS status = ATCA_COMM_FAIL;
+    int attempt;
+    int cure_tried = 0;
 
     // Initiate I2C communication
     if ( (f_i2c = open(i2c_hal_data[bus]->i2c_file, O_RDWR)) < 0)
@@ -255,46 +276,122 @@ ATCA_STATUS hal_i2c_wake(ATCAIface iface)
         return ATCA_COMM_FAIL;
     }
 
-    // Send the wake by writing to an address of 0x00
-    // Create wake up pulse by sending a slave address 0f 0x00.
-    // This slave address is sent to device by using a dummy write command.
-    if (ioctl(f_i2c, I2C_SLAVE, 0x00) < 0)
+    for (attempt = 0; attempt < HAL_I2C_WAKE_RETRIES; attempt++)
     {
-        close(f_i2c);
-        return ATCA_COMM_FAIL;
+        if (attempt > 0)
+        {
+            atca_delay_ms(hal_i2c_wake_backoff_ms[attempt - 1]);
+        }
+
+        // Send the wake by writing to an address of 0x00
+        // Create wake up pulse by sending a slave address 0f 0x00.
+        // This slave address is sent to device by using a dummy write command.
+        if (ioctl(f_i2c, I2C_SLAVE, 0x00) < 0)
+        {
+            status = ATCA_COMM_FAIL;
+            break;
+        }
+
+        // Dummy Write
+        if (write(f_i2c, &dummy_byte, 1) < 0)
+        {
+            // This command will always return NACK.
+            // So, the return code is being ignored.
+        }
+
+        atca_delay_us(cfg->wake_delay); // wait tWHI + tWLO which is configured based on device type and configuration structure
+
+        // Set Slave Address
+        if (ioctl(f_i2c, I2C_SLAVE, cfg->atcai2c.slave_address >> 1) < 0)
+        {
+            status = ATCA_COMM_FAIL;
+            break;
+        }
+
+        // Receive data
+        if (read(f_i2c, data, 4) != 4)
+        {
+            status = ATCA_RX_NO_RESPONSE;
+
+            /* Silent chip. An ABANDONED-AWAKE chip (a collided client
+               left it running without parking; also the corrupted-idle
+               latch) never emits a wake token - pulses are no-ops until
+               the 1.3 s watchdog forces a sleep. Both of those states do
+               ACK a sleep flag though, while a properly parked chip is
+               off the bus and NACKs it. So probe exactly that once: if
+               the flag is ACKed the chip is asleep now and the next
+               pulse wakes it normally. */
+            if (!cure_tried)
+            {
+                cure_tried = 1;
+                if (write(f_i2c, &sleep_flag, 1) == 1)
+                {
+                    ATCA_DIAG("event=wake_cured_sleep attempt=%d", attempt + 1);
+                    atca_delay_ms(1);
+                }
+            }
+        }
+        else if (memcmp(data, expected, 4) == 0)
+        {
+            if (attempt > 0)
+            {
+                ATCA_DIAG("event=wake_retry_ok attempt=%d", attempt + 1);
+            }
+            status = ATCA_SUCCESS;
+            break;
+        }
+        else
+        {
+            /* Bytes, but not the token: the chip is awake, streaming a
+               stale response a collided client never finished reading.
+               While that frame is pending the chip NACKs writes, so the
+               sleep-flag probe alone cannot park it. Drain the leftover
+               frame to free the chip, then park it with the flag (ACKed
+               now); the next pulse wakes it normally.
+
+               A full-buffer read is deliberate: the abandoning client
+               may have consumed part of the frame, so nothing read here
+               - a would-be count byte included - reliably describes what
+               remains; reading past the end only clocks out padding. */
+            uint8_t drain[128];
+            char head_hex[2 * 16 + 1];
+            ssize_t drained;
+            int i;
+
+            status = ATCA_COMM_FAIL;
+            drained = read(f_i2c, drain, sizeof(drain));
+
+            /* Log what the wake read and the drain saw: a structured
+               frame (count byte, CRC) is a stale response left by
+               another client, while a near-token or all-0xff pattern
+               means the wake token itself arrived garbled and there was
+               no leftover frame at all. */
+            head_hex[0] = '\0';
+            for (i = 0; i < 16 && i < drained; i++)
+            {
+                (void)snprintf(&head_hex[2 * i], 3, "%02x", drain[i]);
+            }
+            if (write(f_i2c, &sleep_flag, 1) == 1)
+            {
+                ATCA_DIAG("event=wake_drained_sleep attempt=%d "
+                          "got=%02x%02x%02x%02x drained=%d head=%s",
+                          attempt + 1, data[0], data[1], data[2], data[3],
+                          (int)drained, head_hex);
+                atca_delay_ms(1);
+            }
+        }
     }
 
-    // Dummy Write
-    if (write(f_i2c, &dummy_byte, 1) < 0)
+    if (ATCA_SUCCESS != status)
     {
-        // This command will always return NACK.
-        // So, the return code is being ignored.
-    }
-
-    atca_delay_us(cfg->wake_delay); // wait tWHI + tWLO which is configured based on device type and configuration structure
-
-    // Set Slave Address
-    if (ioctl(f_i2c, I2C_SLAVE, cfg->atcai2c.slave_address >> 1) < 0)
-    {
-        close(f_i2c);
-        return ATCA_COMM_FAIL;
-    }
-
-    // Receive data
-    if (read(f_i2c, data, 4) != 4)
-    {
-        close(f_i2c);
-        return ATCA_RX_NO_RESPONSE;
+        ATCA_DIAG("event=wake_exhausted attempts=%d status=0x%02x",
+                  HAL_I2C_WAKE_RETRIES, status);
     }
 
     close(f_i2c);
     // if necessary, revert baud rate to what came in.
 
-    if (memcmp(data, expected, 4) == 0)
-    {
-        return ATCA_SUCCESS;
-    }
-    return ATCA_COMM_FAIL;
+    return status;
 }
 
 /** \brief idle CryptoAuth device using I2C bus
