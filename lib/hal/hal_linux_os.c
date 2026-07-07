@@ -40,6 +40,7 @@
 #endif
 
 #include "atca_hal.h"
+#include "atca_diag.h"
 
 /** \defgroup hal_ Hardware abstraction layer (hal_)
  *
@@ -368,6 +369,7 @@ ATCA_STATUS hal_os_lock_mutex(void* pMutex)
     {
         /* Lock was obtained but its because another process terminated so the
         state is indeterminate and will probably need to be fixed */
+        ATCA_DIAG("event=mutex_eownerdead");
         pthread_mutex_consistent(pMutex);
         return ATCA_FUNC_FAIL;
     }
