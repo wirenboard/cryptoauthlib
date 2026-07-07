@@ -40,6 +40,7 @@
 #include <string.h>
 #include "atca_command.h"
 #include "atca_devtypes.h"
+#include "atca_diag.h"
 
 /*Execution times for ATSHA204A supported commands...*/
 static const device_execution_time_t device_execution_time_204[] = {
@@ -1130,6 +1131,9 @@ ATCA_STATUS isATCAError(uint8_t *data)
 
     if (data[0] == 0x04)        // error packets are always 4 bytes long
     {
+        /* Ground truth for diagnostics: every abnormal status byte the chip
+           actually returned, logged before any decoding/masking above. */
+        ATCA_DIAG("event=chip_status status=0x%02x", data[1]);
         switch (data[1])
         {
         case 0x01: // checkmac or verify failed
