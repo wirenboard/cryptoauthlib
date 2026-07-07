@@ -354,12 +354,29 @@ ATCA_STATUS hal_i2c_wake(ATCAIface iface)
                - a would-be count byte included - reliably describes what
                remains; reading past the end only clocks out padding. */
             uint8_t drain[128];
+            char head_hex[2 * 16 + 1];
+            ssize_t drained;
+            int i;
 
             status = ATCA_COMM_FAIL;
-            (void)read(f_i2c, drain, sizeof(drain));
+            drained = read(f_i2c, drain, sizeof(drain));
+
+            /* Log what the wake read and the drain saw: a structured
+               frame (count byte, CRC) is a stale response left by
+               another client, while a near-token or all-0xff pattern
+               means the wake token itself arrived garbled and there was
+               no leftover frame at all. */
+            head_hex[0] = '\0';
+            for (i = 0; i < 16 && i < drained; i++)
+            {
+                (void)snprintf(&head_hex[2 * i], 3, "%02x", drain[i]);
+            }
             if (write(f_i2c, &sleep_flag, 1) == 1)
             {
-                ATCA_DIAG("event=wake_drained_sleep attempt=%d", attempt + 1);
+                ATCA_DIAG("event=wake_drained_sleep attempt=%d "
+                          "got=%02x%02x%02x%02x drained=%d head=%s",
+                          attempt + 1, data[0], data[1], data[2], data[3],
+                          (int)drained, head_hex);
                 atca_delay_ms(1);
             }
         }
