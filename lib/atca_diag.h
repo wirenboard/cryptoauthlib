@@ -10,10 +10,17 @@
 #ifndef ATCA_DIAG_H
 #define ATCA_DIAG_H
 
+/* The facility needs a hosted environment (stderr, getenv); on other
+ * targets the macros compile to nothing, so core files may include
+ * this header unconditionally. */
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+
 #include <stdio.h>
 #include <stdlib.h>
 
-/* Cached per translation unit: getenv runs once before the first event. */
+/* Cached per translation unit: getenv runs once before the first event.
+   Concurrent first calls race benignly - every writer stores the same
+   value. */
 static inline int atca_diag_enabled(void)
 {
     static int enabled = -1;
@@ -33,6 +40,12 @@ static inline int atca_diag_enabled(void)
             fprintf(stderr, prefix ": DIAG " f "\n", ##__VA_ARGS__);    \
         }                                                               \
     } while (0)
+
+#else
+
+#define ATCA_DIAG_LINE(prefix, f, ...)    do { } while (0)
+
+#endif
 
 #define ATCA_DIAG(f, ...)    ATCA_DIAG_LINE("atca", f, ##__VA_ARGS__)
 
