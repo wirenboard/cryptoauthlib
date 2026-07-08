@@ -165,6 +165,15 @@ ATCA_STATUS hal_os_destroy_mutex(void* pMutex);
 ATCA_STATUS hal_os_lock_mutex(void* pMutex);
 ATCA_STATUS hal_os_unlock_mutex(void* pMutex);
 
+/* Canonical name of the shared-memory mutex that serializes every chip
+ * user on the system: the OpenSSL engine (loaded by openssl, curl, nginx)
+ * and the direct cryptoauthlib users (wb tools and services). It is a
+ * frozen cross-process protocol constant - every binary must pass this
+ * exact string to hal_os_create_mutex() to meet the others on the same
+ * region. Defined here so the whole stack shares one source of truth; do
+ * not change it. */
+#define ATCA_HAL_SHARED_MUTEX_NAME "ateccx08_01.00.10"
+
 #ifdef __cplusplus
 }
 #endif
