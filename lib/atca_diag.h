@@ -1,19 +1,26 @@
 /**
  * \file
- * \brief Diagnostic tracing of exceptional chip/bus/lock events. Always
- * compiled in, but silent unless the process environment has ATECC_DIAG
+ * \brief Diagnostic tracing of exceptional chip/bus/lock events. Compiled
+ * in by default, but silent unless the process environment has ATECC_DIAG
  * set to a non-empty value other than "0" - so a single production build
  * can be switched per-process without recompilation. One event per line
  * on stderr, machine-parseable:
  *   <prefix>: DIAG event=<name> [key=value ...]
+ *
+ * Defining ATCA_DIAG_DISABLE at compile time removes the facility entirely:
+ * every event site expands to nothing, so neither the getenv() gate nor any
+ * of the diagnostic string literals (the "atca" prefix, "ATECC_DIAG", the
+ * event format strings) are emitted into the object - a strings/objdump
+ * sweep of the resulting binary surfaces none of them.
  */
 #ifndef ATCA_DIAG_H
 #define ATCA_DIAG_H
 
 /* The facility needs a hosted environment (stderr, getenv); on other
- * targets the macros compile to nothing, so core files may include
- * this header unconditionally. */
-#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+ * targets, and when explicitly disabled via ATCA_DIAG_DISABLE, the macros
+ * compile to nothing, so core files may include this header
+ * unconditionally. */
+#if !defined(ATCA_DIAG_DISABLE) && (defined(__linux__) || defined(__unix__) || defined(__APPLE__))
 
 #include <stdio.h>
 #include <stdlib.h>
